@@ -1,0 +1,350 @@
+---
+title: "Live Training Sandbox"
+format: html
+---
+
+
+# OUTLINE
+- Load the data
+VISUALIZE CREDIT SCORE
+- Explore the data
+  - show several graphs trying to explain what separates credit_score (poor, standard, good)
+- Create recipe to apply UMAP
+- Graph UMAP and show separation of credit_score
+BUILD MODEL
+- build original, full decision tree model (workflow with recipe and model)
+- evaluate original DT model
+- build workflow that adds UMAP to the recipe
+- evaluate model
+
+
+Concerns:
+* UMAP model performs worse than original, full model
+  - tried: 
+      - adjusting number of UMAP dimensions
+      - building svm_linear(), rand_forest() (not sure rand forest makes sense, but could try with different numbers of dims)
+  - could try:
+    - rand_forest() with different number of dimensions
+
+```{r}
+# load libraries
+library(tidyverse)
+library(tidymodels)
+library(embed)
+library(tictoc)
+```
+
+
+## Load the data
+```{r}
+credit_df <- read_csv("https://assets.datacamp.com/production/repositories/6081/datasets/e02471e553bc28edddc1fe862666d36e04daed80/credit_score.csv", show_col_types = FALSE)
+```
+
+```{r}
+names(credit_df)
+```
+
+
+Explore some graphs to determine what separates poor, standard, and good credit scores.
+```{r}
+# annual_income vs age
+credit_df %>%  
+  ggplot(aes(x = age, y = annual_income, color = credit_score)) +
+  geom_point(alpha = 0.4) +
+  ylim(7000, 200000)
+
+# annual_income vs outstanding_debt
+credit_df %>%  
+  ggplot(aes(x = outstanding_debt, y = annual_income, color = credit_score)) +
+  geom_point(alpha = 0.4) +
+  ylim(7000, 200000)
+
+# credit_utilization_ratio vs. payment_behavior
+credit_df %>%  
+  ggplot(aes(x = credit_utilization_ratio, y = payment_behaviour, color = credit_score)) +
+  geom_point(alpha = 0.4)
+
+# delay_from_due_date vs credit_history_months 
+credit_df %>%  
+  ggplot(aes(x = delay_from_due_date, y = credit_history_months , color = credit_score)) +
+  geom_point(alpha = 0.4)
+```
+
+
+Build a tidymodels recipe to reduce the dimensionality of the data with UMAP.  This will extract information from different dimensions and combine that information into fewer dimensions. In this case, we'll fit two dimensions (`num_comp = 2`).
+
+```{r}
+# define a recipe with a UMAP step
+umap_recipe <-  recipe(credit_score ~ ., data = credit_df) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_umap(all_predictors(), outcome = vars(credit_score), num_comp = 2)
+
+# train that recipe (with prep()) and then extract the fitted data (with juice())
+umap_credit_df <- 
+  umap_recipe %>% 
+  prep() %>% 
+  juice()
+
+glimpse(umap_credit_df)
+```
+
+
+Plot the two extracted UMAP dimensions
+```{r}
+umap_credit_df %>%  
+  ggplot(aes(x = UMAP1, y = UMAP2, color = credit_score)) +
+  geom_point(alpha = 0.2)
+```
+
+# Prepare a workflow with a recipe and model
+
+## some data preparation
+```{r}
+# convert target variable ("credit_score") into a factor
+credit_df <- credit_df %>% 
+  mutate(credit_score = as_factor(credit_score))
+
+# initialize split for test and train sets
+set.seed(3) 
+credit_split <-  initial_split(credit_df)
+
+# save train and test sets
+train <- training(credit_split)
+test <-  testing(credit_split)
+```
+
+
+## Build a workflow with a decision tree model
+```{r}
+# build a workflow to perform UMAP on the data and fit a decision tree model
+dt_recipe <-  recipe(credit_score ~ ., data = train) 
+dt_model <- decision_tree(mode = "classification")
+dt_workflow <-  workflow() %>% 
+  add_recipe(dt_recipe) %>% 
+  add_model(dt_model)
+
+dt_fit <- dt_workflow %>%
+  fit(data = train)
+
+# predict the test set
+predict_df <- test %>% 
+  bind_cols(predict = predict(dt_fit, test))
+
+# evaluate the model performance on the test set
+f_meas(predict_df, credit_score, .pred_class)
+```
+
+## Build a workflow with UMAP recipe and a decision tree model
+```{r}
+# build a workflow to perform UMAP on the data and fit a decision tree model
+dt_recipe <-  recipe(credit_score ~ ., data = train) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_umap(all_numeric_predictors(), outcome = vars(credit_score), num_comp = 4)
+dt_model <- decision_tree(mode = "classification")
+dt_workflow <-  workflow() %>% 
+  add_recipe(dt_recipe) %>% 
+  add_model(dt_model)
+
+dt_fit <- dt_workflow %>%
+  fit(data = train)
+
+# predict the test set
+predict_df <- test %>% 
+  bind_cols(predict = predict(dt_fit, test))
+
+# evaluate the model performance on the test set
+f_meas(predict_df, credit_score, .pred_class)
+```
+RESULTS for MAP:
+* 2 dims --> F = 0.5293
+* 3 dims --> F = 0.5417
+* 4 dims --> F = 0.5385
+* 5 dims --> F = 0.5464
+* 8 dims --> F = 0.5439
+
+
+#### ---------------------------sandbox-------------------------
+## Build a workflow with a decision tree model
+```{r}
+# build a workflow to perform UMAP on the data and fit a decision tree model
+rf_recipe <-  recipe(credit_score ~ ., data = train) 
+
+## use kernlab engine - it supports categorical predictors
+rf_model <- rand_forest(mode = "classification")
+rf_workflow <-  workflow() %>% 
+  add_recipe(rf_recipe) %>% 
+  add_model(rf_model)
+
+rf_fit <- rf_workflow %>%
+  fit(data = train)
+
+# predict the test set
+predict_df <- test %>% 
+  bind_cols(predict = predict(rf_fit, test))
+
+# evaluate the model performance on the test set
+f_meas(predict_df, credit_score, .pred_class)
+```
+## umap recipe - random_forest
+```{r}
+# build a workflow to perform UMAP on the data and fit a decision tree model
+rf_umap_recipe <-  recipe(credit_score ~ ., data = train) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_umap(all_numeric_predictors(), outcome = vars(credit_score), num_comp = 2)
+#rf_model <- svm_linear(mode = "classification", engine = "kernlab")
+rf_model <- rand_forest(mode = "classification")
+rf_umap_workflow <-  workflow() %>% 
+  add_recipe(rf_umap_recipe) %>% 
+  add_model(rf_model)
+
+rf_umap_fit <- rf_umap_workflow %>%
+  fit(data = train)
+
+# predict the test set
+predict_df <- test %>% 
+  bind_cols(predict = predict(rf_umap_fit, test))
+
+# evaluate the model performance on the test set
+f_meas(predict_df, credit_score, .pred_class)
+```
+
+
+```{r}
+# build a workflow to perform umap on the data and fit a decision tree model
+umap_recipe <-  recipe(credit_score ~ ., data = train) %>% 
+  step_normalize(all_predictors()) %>% 
+  step_umap(all_predictors(), outcome = vars(credit_score), num_comp = 2)
+umap_dt_model <- decision_tree(mode = "classification")
+umap_dt_workflow <-  workflow() %>% 
+  add_recipe(umap_recipe) %>% 
+  add_model(umap_dt_model)
+```
+
+
+## Build a workflow with a decision tree model
+
+
+
+
+
+## ---------------------copied material----------------------
+
+```{r}
+names(credit_df) <-  tolower(names(credit_df))
+credit_num_df <- credit_df %>% select_if(is.numeric)
+
+credit_df <- bind_cols(credit_df %>% select(credit_score), credit_num_df) %>% 
+  mutate(credit_score = as_factor(credit_score))
+
+set.seed(3) 
+credit_split <-  initial_split(credit_df)
+
+train <- training(credit_split)
+test <-  testing(credit_split)
+
+
+## Setup decision tree workflow with no UMAP preprocessing and fit model
+credit_recipe <-
+  recipe(credit_score ~ ., data = train)
+
+credit_model <- decision_tree(mode = "classification") 
+
+credit_workflow <-
+  workflow() %>%
+  add_recipe(credit_recipe) %>%
+  add_model(credit_model)
+
+dt_fit <- credit_workflow %>%
+  fit(data = train)
+```
+
+
+```{r}
+# Create test set prediction data frame
+predict_df <- test %>% 
+  bind_cols(predict = predict(dt_fit, test))
+
+##############
+### Step 1 ###
+##############
+
+# evaluate the original decision tree model performance on the test data
+evaluate_model_fmeas(test, dt_fit, "credit_score")
+
+##############
+### Step 2 ###
+##############
+evaluate_model_fmeas(test, dt_fit, "credit_score")
+
+# build a workflow to perform umap on the data and fit a decision tree model
+umap_recipe <-  recipe(credit_score ~ ., data = train) %>% 
+  step_normalize(all_predictors()) %>% 
+  step_umap(all_predictors(), outcome = vars(credit_score), num_comp = 2)
+umap_dt_model <- decision_tree(mode = "classification")
+umap_dt_workflow <-  workflow() %>% 
+  add_recipe(umap_recipe) %>% 
+  add_model(umap_dt_model)
+
+##############
+### Step 3 ###
+##############
+evaluate_model_fmeas(test, dt_fit, "credit_score")
+
+umap_recipe <-  recipe(credit_score ~ ., data = train) %>% 
+  step_normalize(all_predictors()) %>% 
+  step_umap(all_predictors(), outcome = vars(credit_score), num_comp = 2)
+umap_dt_model <- decision_tree(mode = "classification")
+umap_dt_workflow <-  workflow() %>% 
+  add_recipe(umap_recipe) %>% 
+  add_model(umap_dt_model)
+
+# fit the umap decision tree model to the training data
+umap_dt_fit <- umap_dt_workflow %>%  fit(data = train)
+
+# evaluate the umap decision tree model performance on the test data
+evaluate_model_fmeas(test, umap_dt_fit, "credit_score")
+```
+
+
+```{r}
+
+##############
+### Step 1 ###
+##############
+
+# evaluate the original decision tree model performance on the test data
+evaluate_model_fmeas(test, dt_fit, "credit_score")
+
+##############
+### Step 2 ###
+##############
+evaluate_model_fmeas(test, dt_fit, "credit_score")
+
+# build a workflow to perform umap on the data and fit a decision tree model
+umap_recipe <-  recipe(credit_score ~ ., data = train) %>% 
+  step_normalize(all_predictors()) %>% 
+  step_umap(all_predictors(), outcome = vars(credit_score), num_comp = 2)
+umap_dt_model <- decision_tree(mode = "classification")
+umap_dt_workflow <-  workflow() %>% 
+  add_recipe(umap_recipe) %>% 
+  add_model(umap_dt_model)
+
+##############
+### Step 3 ###
+##############
+evaluate_model_fmeas(test, dt_fit, "credit_score")
+
+umap_recipe <-  recipe(credit_score ~ ., data = train) %>% 
+  step_normalize(all_predictors()) %>% 
+  step_umap(all_predictors(), outcome = vars(credit_score), num_comp = 2)
+umap_dt_model <- decision_tree(mode = "classification")
+umap_dt_workflow <-  workflow() %>% 
+  add_recipe(umap_recipe) %>% 
+  add_model(umap_dt_model)
+
+# fit the umap decision tree model to the training data
+umap_dt_fit <- umap_dt_workflow %>%  fit(data = train)
+
+# evaluate the umap decision tree model performance on the test data
+evaluate_model_fmeas(test, umap_dt_fit, "credit_score")
+```
