@@ -26,6 +26,11 @@ Concerns:
   - could try:
     - rand_forest() with different number of dimensions
 
+
+ABSTRACT:
+In this live training, we’ll motivate the benefits of dimensionality reduction while exploring predictors of credit scores.  Using ggplot2, we’ll demonstrate how UMAP can extract information-rich features that help to group credit scores. Then, we’ll build UMAP into a tidymodels workflow that fits a decision tree model to predict credit scores.  We’ll evaluate the performance of models with and without UMAP dimensionality reduction. 
+
+
 ```{r}
 # load libraries
 library(tidyverse)
